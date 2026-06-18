@@ -201,10 +201,10 @@ async def _async_log_services(client: BleakClient, max_read_bytes: int) -> None:
     services = client.services
     LOGGER.debug(
         "PETKIT HA Bluetooth GATT diagnostics: discovered %s services",
-        len(services),
+        len(services.services),
     )
 
-    for service in services:
+    for service in services.services.values():
         LOGGER.debug(
             "PETKIT HA Bluetooth GATT diagnostics: service uuid=%s description=%s",
             service.uuid,
