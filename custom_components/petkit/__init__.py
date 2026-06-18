@@ -143,7 +143,7 @@ SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS_SCHEMA = vol.Schema(
         vol.Required(SERVICE_FIELD_ADDRESS): cv.string,
         vol.Optional(
             SERVICE_FIELD_DURATION, default=DEFAULT_LISTEN_DURATION
-        ): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=MAX_LISTEN_DURATION)),
     }
 )
 
@@ -245,10 +245,20 @@ async def _async_handle_listen_bluetooth_notifications(
     hass: HomeAssistant, call: ServiceCall
 ) -> None:
     """Handle the listen_bluetooth_notifications diagnostic service call."""
+    requested_duration = call.data.get(
+        SERVICE_FIELD_DURATION, DEFAULT_LISTEN_DURATION
+    )
+    effective_duration = int(requested_duration)
+    LOGGER.debug(
+        "PETKIT HA Bluetooth notification diagnostics: "
+        "requested_duration=%s effective_duration=%s",
+        requested_duration,
+        effective_duration,
+    )
     await async_listen_petkit_notifications(
         hass,
         address=call.data[SERVICE_FIELD_ADDRESS],
-        duration=call.data[SERVICE_FIELD_DURATION],
+        duration=effective_duration,
     )
 
 

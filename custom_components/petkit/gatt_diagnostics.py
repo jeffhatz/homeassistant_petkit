@@ -144,10 +144,11 @@ async def async_listen_petkit_notifications(
     """Connect to a Petkit device and log AAA1 notifications."""
     bluetooth.async_get_scanner(hass)
 
-    duration = min(duration, MAX_LISTEN_DURATION)
     device_address = _normalize_address(address)
+    lock = _async_get_address_lock(hass, device_address)
 
-    async with _async_get_address_lock(hass, device_address):
+    await lock.acquire()
+    try:
         service_info = bluetooth.async_last_service_info(
             hass, device_address, connectable=True
         )
@@ -156,6 +157,13 @@ async def async_listen_petkit_notifications(
             device_address,
             service_info=service_info,
             duration=duration,
+        )
+    finally:
+        lock.release()
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: released "
+            "listener lock address=%s",
+            device_address,
         )
 
 
@@ -194,16 +202,22 @@ async def _async_listen_address(
     """Listen for AAA1 notifications from one Bluetooth address."""
     client: BleakClient | None = None
     notify_started = False
-    started_at = monotonic()
+    listener_started_at = monotonic()
+    subscription_started_at = listener_started_at
+    notification_count = 0
 
-    def _notification_handler(_: int, data: bytearray) -> None:
-        elapsed = monotonic() - started_at
+    def notification_handler(sender, data: bytearray) -> None:
+        nonlocal notification_count
+
+        notification_count += 1
+        elapsed = monotonic() - subscription_started_at
+        sender_uuid = getattr(sender, "uuid", sender)
         payload = bytes(data)
         LOGGER.debug(
-            "PETKIT HA Bluetooth notification diagnostics: elapsed=%.3fs "
-            "uuid=%s len=%s hex=%s",
+            "PETKIT HA Bluetooth notification diagnostics: notification "
+            "elapsed=%.3fs sender=%s len=%s hex=%s",
             elapsed,
-            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            sender_uuid,
             len(payload),
             payload.hex(" "),
         )
@@ -225,20 +239,47 @@ async def _async_listen_address(
             initial_value.hex(" "),
         )
 
-        started_at = monotonic()
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: before "
+            "start_notify address=%s uuid=%s",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+        )
+        subscription_started_at = monotonic()
         await client.start_notify(
             PETKIT_AAA1_CHARACTERISTIC_UUID,
-            _notification_handler,
+            notification_handler,
         )
         notify_started = True
         LOGGER.debug(
-            "PETKIT HA Bluetooth notification diagnostics: listening "
-            "address=%s uuid=%s duration=%ss",
+            "PETKIT HA Bluetooth notification diagnostics: start_notify "
+            "succeeded address=%s uuid=%s",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+        )
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: entering timed "
+            "wait address=%s uuid=%s duration=%ss",
             address,
             PETKIT_AAA1_CHARACTERISTIC_UUID,
             duration,
         )
         await asyncio.sleep(duration)
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: timed wait "
+            "finished address=%s uuid=%s duration=%ss",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            duration,
+        )
+    except asyncio.CancelledError:
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: listener "
+            "cancelled address=%s uuid=%s",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+        )
+        raise
     except Exception as err:
         LOGGER.warning(
             "PETKIT HA Bluetooth notification diagnostics: listener failed "
@@ -248,24 +289,60 @@ async def _async_listen_address(
             err,
         )
     finally:
-        if notify_started and client is not None and client.is_connected:
-            try:
-                await client.stop_notify(PETKIT_AAA1_CHARACTERISTIC_UUID)
+        try:
+            if notify_started and client is not None and client.is_connected:
                 LOGGER.debug(
-                    "PETKIT HA Bluetooth notification diagnostics: stopped "
-                    "notifications address=%s uuid=%s",
+                    "PETKIT HA Bluetooth notification diagnostics: before "
+                    "stop_notify address=%s uuid=%s",
                     address,
                     PETKIT_AAA1_CHARACTERISTIC_UUID,
                 )
-            except Exception as err:
-                LOGGER.debug(
-                    "PETKIT HA Bluetooth notification diagnostics: stop_notify "
-                    "failed address=%s uuid=%s: %s",
-                    address,
-                    PETKIT_AAA1_CHARACTERISTIC_UUID,
-                    err,
-                )
-        await _async_disconnect(client, address)
+                try:
+                    async with asyncio.timeout(10):
+                        await client.stop_notify(PETKIT_AAA1_CHARACTERISTIC_UUID)
+                    LOGGER.debug(
+                        "PETKIT HA Bluetooth notification diagnostics: after "
+                        "stop_notify address=%s uuid=%s",
+                        address,
+                        PETKIT_AAA1_CHARACTERISTIC_UUID,
+                    )
+                except TimeoutError:
+                    LOGGER.warning(
+                        "PETKIT HA Bluetooth notification diagnostics: "
+                        "stop_notify timed out address=%s uuid=%s",
+                        address,
+                        PETKIT_AAA1_CHARACTERISTIC_UUID,
+                    )
+                except Exception as err:
+                    LOGGER.debug(
+                        "PETKIT HA Bluetooth notification diagnostics: "
+                        "stop_notify failed address=%s uuid=%s: %s",
+                        address,
+                        PETKIT_AAA1_CHARACTERISTIC_UUID,
+                        err,
+                    )
+            LOGGER.debug(
+                "PETKIT HA Bluetooth notification diagnostics: before "
+                "disconnect address=%s",
+                address,
+            )
+            await _async_disconnect(client, address)
+            LOGGER.debug(
+                "PETKIT HA Bluetooth notification diagnostics: after "
+                "disconnect address=%s",
+                address,
+            )
+        finally:
+            elapsed = monotonic() - listener_started_at
+            LOGGER.debug(
+                "PETKIT HA Bluetooth notification diagnostics: listener "
+                "complete address=%s uuid=%s notification_count=%s "
+                "elapsed=%.3fs",
+                address,
+                PETKIT_AAA1_CHARACTERISTIC_UUID,
+                notification_count,
+                elapsed,
+            )
 
 
 async def _async_connect_address(
@@ -312,11 +389,47 @@ async def _async_connect_address(
 
 async def _async_disconnect(client: BleakClient | None, address: str) -> None:
     """Disconnect a diagnostic Bluetooth client."""
-    if client is not None and client.is_connected:
-        await client.disconnect()
+    LOGGER.debug(
+        "PETKIT HA Bluetooth GATT diagnostics: before disconnect address=%s",
+        address,
+    )
+
+    if client is None:
         LOGGER.debug(
-            "PETKIT HA Bluetooth GATT diagnostics: disconnected address=%s",
+            "PETKIT HA Bluetooth GATT diagnostics: after disconnect "
+            "address=%s skipped=client_none",
             address,
+        )
+        return
+
+    if not client.is_connected:
+        LOGGER.debug(
+            "PETKIT HA Bluetooth GATT diagnostics: after disconnect "
+            "address=%s skipped=already_disconnected",
+            address,
+        )
+        return
+
+    try:
+        async with asyncio.timeout(10):
+            await client.disconnect()
+        LOGGER.debug(
+            "PETKIT HA Bluetooth GATT diagnostics: after disconnect "
+            "address=%s",
+            address,
+        )
+    except TimeoutError:
+        LOGGER.warning(
+            "PETKIT HA Bluetooth GATT diagnostics: disconnect timed out "
+            "address=%s",
+            address,
+        )
+    except Exception as err:
+        LOGGER.warning(
+            "PETKIT HA Bluetooth GATT diagnostics: disconnect failed "
+            "address=%s: %s",
+            address,
+            err,
         )
 
 
