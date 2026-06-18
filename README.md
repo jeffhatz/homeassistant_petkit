@@ -56,9 +56,15 @@ logger:
 When a fountain such as `Petkit_W4XUVC` is visible, look for log lines like:
 
 ```text
-PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-47 source=xx:xx:xx:xx:xx:xx connectable=True service_uuids=[] manufacturer_data_keys=[] service_data_keys=[]
+PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-49 source=D4:E9:F4:74:E6:4A connectable=True service_uuids=['5b70bdd8-91bf-e789-9f4d-720508e63ebb'] manufacturer_data_keys=[] service_data_keys=['00000000-0000-1000-8000-00805f9b34fb', '0000c1a4-0000-1000-8000-00805f9b34fb']
 PETKIT HA Bluetooth advertisement discovery path (cache): Eversweet 3 Pro UVC candidate visible as Petkit_W4XUVC at A4:C1:38:60:7E:8E
 ```
+
+These advertisements confirm HA Bluetooth/ESPHome proxy visibility, but they
+do not expose decoded water or filter state. Run the diagnostic-only
+`petkit.inspect_bluetooth_gatt` service with the fountain's Bluetooth address
+to inspect GATT services and readable characteristics. It logs hex values,
+disconnects, and does not write to the fountain or update entity state.
 
 ## ❤️ Enjoying this integration?
 

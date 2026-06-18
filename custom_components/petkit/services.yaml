@@ -42,3 +42,41 @@ set_feeding_schedule:
               amount2: 5
       selector:
         object:
+
+inspect_bluetooth_gatt:
+  name: Inspect Bluetooth GATT
+  description: >
+    Diagnostic-only service that connects to a visible Petkit Bluetooth device
+    through Home Assistant Bluetooth, logs its GATT services/characteristics,
+    reads readable characteristics, and disconnects. It does not write to the
+    device or update entity state.
+  fields:
+    address:
+      name: Bluetooth address
+      description: >
+        Optional Bluetooth MAC address to inspect. If omitted, the integration
+        uses a visible Petkit_W4XUVC advertisement when available.
+      required: false
+      example: A4:C1:38:60:7E:8E
+      selector:
+        text:
+    local_name:
+      name: Local name
+      description: >
+        Optional exact Bluetooth local name to inspect when address is omitted.
+      required: false
+      example: Petkit_W4XUVC
+      selector:
+        text:
+    max_read_bytes:
+      name: Maximum read bytes
+      description: >
+        Maximum number of bytes to include in the hex log for each readable
+        characteristic. Set to 0 to log only lengths.
+      required: false
+      default: 128
+      selector:
+        number:
+          min: 0
+          max: 1024
+          mode: box

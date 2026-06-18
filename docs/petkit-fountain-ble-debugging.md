@@ -45,14 +45,38 @@ logger:
 For an Eversweet 3 Pro UVC visible as `Petkit_W4XUVC`, expect lines like:
 
 ```text
-PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-47 source=xx:xx:xx:xx:xx:xx connectable=True service_uuids=[] manufacturer_data_keys=[] service_data_keys=[]
+PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-49 source=D4:E9:F4:74:E6:4A connectable=True service_uuids=['5b70bdd8-91bf-e789-9f4d-720508e63ebb'] manufacturer_data_keys=[] service_data_keys=['00000000-0000-1000-8000-00805f9b34fb', '0000c1a4-0000-1000-8000-00805f9b34fb']
 PETKIT HA Bluetooth advertisement discovery path (cache): Eversweet 3 Pro UVC candidate visible as Petkit_W4XUVC at A4:C1:38:60:7E:8E
 ```
 
 If the PetKit cloud relay path also logs `No BLE relay devices found.`, that
 means PetKit's own relay-discovery endpoint did not return a relay device.
 It does not mean Home Assistant Bluetooth or the ESPHome proxy failed to see
-the fountain.
+the fountain. These advertisement logs confirm visibility, but they do not
+expose decoded water or filter state.
+
+When advertisements are visible but do not expose enough state, call the
+`petkit.inspect_bluetooth_gatt` service with the fountain address:
+
+```yaml
+action: petkit.inspect_bluetooth_gatt
+data:
+  address: A4:C1:38:60:7E:8E
+  max_read_bytes: 128
+```
+
+Expected diagnostic output:
+
+```text
+PETKIT HA Bluetooth GATT diagnostics: connecting address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC source=D4:E9:F4:74:E6:4A
+PETKIT HA Bluetooth GATT diagnostics: service uuid=...
+PETKIT HA Bluetooth GATT diagnostics: characteristic uuid=... handle=... properties=['read', 'write-without-response'] description=...
+PETKIT HA Bluetooth GATT diagnostics: read uuid=... len=... truncated=False hex=...
+PETKIT HA Bluetooth GATT diagnostics: disconnected address=A4:C1:38:60:7E:8E
+```
+
+This opens a short direct BLE connection, so avoid running it while the PetKit
+app is actively connected to the fountain.
 
 ## Quick fix to try first: connect from another phone
 
