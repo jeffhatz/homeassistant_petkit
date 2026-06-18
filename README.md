@@ -35,6 +35,31 @@
 [![Discord][discord-shield]][discord]
 [![Community Forum][forum-shield]][forum]
 
+## Bluetooth advertisement diagnostics
+
+For fountains such as the Eversweet 3 Pro UVC, this integration can log
+Home Assistant Bluetooth advertisements seen by local adapters or ESPHome
+Bluetooth Proxies. This is diagnostic-only: it does not update entities,
+open a direct BLE connection, or replace the existing PetKit cloud relay
+path.
+
+Enable debug logging:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.petkit: debug
+    pypetkitapi.bluetooth: debug
+```
+
+When a fountain such as `Petkit_W4XUVC` is visible, look for log lines like:
+
+```text
+PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-47 source=xx:xx:xx:xx:xx:xx connectable=True service_uuids=[] manufacturer_data_keys=[] service_data_keys=[]
+PETKIT HA Bluetooth advertisement discovery path (cache): Eversweet 3 Pro UVC candidate visible as Petkit_W4XUVC at A4:C1:38:60:7E:8E
+```
+
 ## ❤️ Enjoying this integration?
 
 ### Leave a Github Star ⭐ it's free and helps others discover this integration.

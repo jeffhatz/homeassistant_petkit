@@ -51,6 +51,7 @@ from .const import (
     MEDIA_SECTION,
     NOTIFICATION_SECTION,
 )
+from .bluetooth_diagnostics import async_register_petkit_bluetooth_diagnostics
 from .coordinator import (
     PetkitBluetoothUpdateCoordinator,
     PetkitDataUpdateCoordinator,
@@ -256,6 +257,7 @@ async def async_setup_entry(
         coordinator_media=coordinator_media,
         coordinator_bluetooth=coordinator_bluetooth,
     )
+    entry.async_on_unload(async_register_petkit_bluetooth_diagnostics(hass))
 
     await coordinator.async_config_entry_first_refresh()
 

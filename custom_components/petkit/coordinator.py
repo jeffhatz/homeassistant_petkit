@@ -32,6 +32,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .bluetooth_diagnostics import async_log_petkit_bluetooth_cache
 from .const import (
     BT_SECTION,
     CONF_BLE_RELAY_ENABLED,
@@ -113,6 +114,7 @@ class PetkitDataUpdateCoordinator(DataUpdateCoordinator):
         await self._update_smart_polling()
 
         try:
+            LOGGER.debug("PETKIT cloud/API refresh path: requesting device data")
             await self.config_entry.runtime_data.client.get_devices_data()
         except (
             PetkitSessionExpiredError,
@@ -125,6 +127,9 @@ class PetkitDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(exception) from exception
         else:
             data = self.config_entry.runtime_data.client.petkit_entities
+            LOGGER.debug(
+                "PETKIT cloud/API refresh path: received %s entities", len(data)
+            )
             previous_devices = self.previous_devices
             previous_identifiers = self.previous_device_identifiers
             self.current_devices = set(data)
@@ -307,27 +312,45 @@ class PetkitBluetoothUpdateCoordinator(DataUpdateCoordinator):
     ) -> dict[int, Any]:
         """Update data via connecting to bluetooth (over API)."""
         updated_fountain = {}
+        fountain_ids = [
+            device_id
+            for device_id in self.data_coordinator.current_devices
+            if isinstance(
+                self.config.runtime_data.client.petkit_entities.get(device_id),
+                WaterFountain,
+            )
+        ]
+
+        if fountain_ids:
+            async_log_petkit_bluetooth_cache(self.hass)
 
         if not self.config.options.get(BT_SECTION, {}).get(
             CONF_BLE_RELAY_ENABLED, DEFAULT_BLUETOOTH_RELAY
         ):
-            LOGGER.debug("BLE relay is disabled by configuration")
+            LOGGER.debug(
+                "PETKIT relay discovery path: BLE relay is disabled by configuration"
+            )
             return updated_fountain
 
-        LOGGER.debug("Update bluetooth connection for all fountains")
-        for device_id in self.data_coordinator.current_devices:
-            device = self.config.runtime_data.client.petkit_entities.get(device_id)
-            if isinstance(device, WaterFountain):
-                LOGGER.debug(
-                    f"Updating bluetooth connection for device id = {device_id}"
-                )
-                self.hass.async_create_task(
-                    self._async_update_bluetooth_connection(device_id)
-                )
+        LOGGER.debug("PETKIT relay discovery path: updating all fountains over API")
+        for device_id in fountain_ids:
+            LOGGER.debug(
+                "PETKIT relay discovery path: updating bluetooth connection "
+                "for device id = %s",
+                device_id,
+            )
+            self.hass.async_create_task(
+                self._async_update_bluetooth_connection(device_id)
+            )
         return self.last_update_timestamps
 
     async def _async_update_bluetooth_connection(self, device_id: str) -> bool:
         """Update bluetooth connection."""
+        LOGGER.debug(
+            "PETKIT relay discovery path: opening API BLE relay connection "
+            "for device id = %s",
+            device_id,
+        )
         if await self.config.runtime_data.client.bluetooth_manager.open_ble_connection(
             device_id
         ):

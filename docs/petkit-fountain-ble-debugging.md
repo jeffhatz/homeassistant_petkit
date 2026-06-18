@@ -25,6 +25,35 @@ name follows `Petkit_<MODEL>_<NNN>`, where MODEL is `CTW3`, `CTW3UV`,
 Examples below assume MAC `A4:C1:38:XX:XX:XX` and name `Petkit_<MODEL>_<NNN>`.
 Substitute your own.
 
+## Home Assistant Bluetooth advertisement diagnostics
+
+The integration logs PETKIT advertisements that Home Assistant already sees
+through local Bluetooth adapters or ESPHome Bluetooth Proxies. This is
+diagnostic-only. It does not update entity state and does not replace the
+existing PetKit cloud/API BLE relay path.
+
+Enable debug logging:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.petkit: debug
+    pypetkitapi.bluetooth: debug
+```
+
+For an Eversweet 3 Pro UVC visible as `Petkit_W4XUVC`, expect lines like:
+
+```text
+PETKIT HA Bluetooth advertisement discovery path (cache): matched address=A4:C1:38:60:7E:8E local_name=Petkit_W4XUVC rssi=-47 source=xx:xx:xx:xx:xx:xx connectable=True service_uuids=[] manufacturer_data_keys=[] service_data_keys=[]
+PETKIT HA Bluetooth advertisement discovery path (cache): Eversweet 3 Pro UVC candidate visible as Petkit_W4XUVC at A4:C1:38:60:7E:8E
+```
+
+If the PetKit cloud relay path also logs `No BLE relay devices found.`, that
+means PetKit's own relay-discovery endpoint did not return a relay device.
+It does not mean Home Assistant Bluetooth or the ESPHome proxy failed to see
+the fountain.
+
 ## Quick fix to try first: connect from another phone
 
 If one phone keeps getting "failed to connect", have a different phone with
