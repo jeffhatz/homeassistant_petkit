@@ -78,6 +78,20 @@ PETKIT HA Bluetooth GATT diagnostics: disconnected address=A4:C1:38:60:7E:8E
 This opens a short direct BLE connection, so avoid running it while the PetKit
 app is actively connected to the fountain.
 
+If GATT inspection shows `0000aaa1-0000-1000-8000-00805f9b34fb` as readable
+and notifiable, capture raw notifications with:
+
+```yaml
+action: petkit.listen_bluetooth_notifications
+data:
+  address: A4:C1:38:60:7E:8E
+  duration: 60
+```
+
+The listener reads AAA1 once, subscribes to AAA1 notifications, logs elapsed
+time and complete raw hex payloads, then stops notifications and disconnects.
+It does not write to AAA2 or any other characteristic.
+
 ## Quick fix to try first: connect from another phone
 
 If one phone keeps getting "failed to connect", have a different phone with

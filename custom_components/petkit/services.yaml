@@ -80,3 +80,31 @@ inspect_bluetooth_gatt:
           min: 0
           max: 1024
           mode: box
+
+listen_bluetooth_notifications:
+  name: Listen Bluetooth notifications
+  description: >
+    Diagnostic-only service that connects to a visible Petkit Bluetooth device,
+    reads the AAA1 characteristic, subscribes to AAA1 notifications for a
+    bounded duration, logs raw notification payloads, and disconnects. It does
+    not write to the device or update entity state.
+  fields:
+    address:
+      name: Bluetooth address
+      description: Bluetooth MAC address to listen to.
+      required: true
+      example: A4:C1:38:60:7E:8E
+      selector:
+        text:
+    duration:
+      name: Duration
+      description: >
+        Number of seconds to keep the notification listener open. The service
+        caps this at 300 seconds.
+      required: false
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 300
+          mode: box

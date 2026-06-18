@@ -58,7 +58,13 @@ from .coordinator import (
     PetkitMediaUpdateCoordinator,
 )
 from .data import PetkitData
-from .gatt_diagnostics import DEFAULT_MAX_READ_BYTES, async_inspect_petkit_gatt
+from .gatt_diagnostics import (
+    DEFAULT_MAX_READ_BYTES,
+    DEFAULT_LISTEN_DURATION,
+    MAX_LISTEN_DURATION,
+    async_inspect_petkit_gatt,
+    async_listen_petkit_notifications,
+)
 from .iot_mqtt import PetkitIotMqttListener
 from .notifications import PetkitNotificationManager
 from .whep_proxy import (
@@ -90,8 +96,10 @@ PLATFORMS: list[Platform] = [
 
 SERVICE_SET_FEEDING_SCHEDULE = "set_feeding_schedule"
 SERVICE_INSPECT_BLUETOOTH_GATT = "inspect_bluetooth_gatt"
+SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS = "listen_bluetooth_notifications"
 
 SERVICE_FIELD_ADDRESS = "address"
+SERVICE_FIELD_DURATION = "duration"
 SERVICE_FIELD_LOCAL_NAME = "local_name"
 SERVICE_FIELD_MAX_READ_BYTES = "max_read_bytes"
 
@@ -127,6 +135,15 @@ SERVICE_INSPECT_BLUETOOTH_GATT_SCHEMA = vol.Schema(
         vol.Optional(
             SERVICE_FIELD_MAX_READ_BYTES, default=DEFAULT_MAX_READ_BYTES
         ): vol.All(vol.Coerce(int), vol.Range(min=0, max=1024)),
+    }
+)
+
+SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS_SCHEMA = vol.Schema(
+    {
+        vol.Required(SERVICE_FIELD_ADDRESS): cv.string,
+        vol.Optional(
+            SERVICE_FIELD_DURATION, default=DEFAULT_LISTEN_DURATION
+        ): vol.All(vol.Coerce(int), vol.Range(min=1)),
     }
 )
 
@@ -221,6 +238,17 @@ async def _async_handle_inspect_bluetooth_gatt(
         address=call.data.get(SERVICE_FIELD_ADDRESS),
         local_name=call.data.get(SERVICE_FIELD_LOCAL_NAME),
         max_read_bytes=call.data[SERVICE_FIELD_MAX_READ_BYTES],
+    )
+
+
+async def _async_handle_listen_bluetooth_notifications(
+    hass: HomeAssistant, call: ServiceCall
+) -> None:
+    """Handle the listen_bluetooth_notifications diagnostic service call."""
+    await async_listen_petkit_notifications(
+        hass,
+        address=call.data[SERVICE_FIELD_ADDRESS],
+        duration=call.data[SERVICE_FIELD_DURATION],
     )
 
 
@@ -363,6 +391,19 @@ async def async_setup_entry(
             SERVICE_INSPECT_BLUETOOTH_GATT,
             handle_inspect_bluetooth_gatt,
             schema=SERVICE_INSPECT_BLUETOOTH_GATT_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS):
+
+        async def handle_listen_bluetooth_notifications(call: ServiceCall) -> None:
+            """Wrapper so HA detects this as a coroutine function."""
+            await _async_handle_listen_bluetooth_notifications(hass, call)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS,
+            handle_listen_bluetooth_notifications,
+            schema=SERVICE_LISTEN_BLUETOOTH_NOTIFICATIONS_SCHEMA,
         )
 
     return True

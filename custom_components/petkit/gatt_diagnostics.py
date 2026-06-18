@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from bleak import BleakClient
@@ -23,8 +24,12 @@ if TYPE_CHECKING:
 
     from homeassistant.core import HomeAssistant
 
-DATA_GATT_DIAGNOSTIC_LOCK = "gatt_diagnostic_lock"
+DATA_GATT_DIAGNOSTIC_LOCKS = "gatt_diagnostic_locks"
 DEFAULT_MAX_READ_BYTES = 128
+DEFAULT_LISTEN_DURATION = 60
+MAX_LISTEN_DURATION = 300
+
+PETKIT_AAA1_CHARACTERISTIC_UUID = "0000aaa1-0000-1000-8000-00805f9b34fb"
 
 
 def _normalize_address(address: str) -> str:
@@ -45,6 +50,13 @@ def _format_bytes(value: bytes, max_read_bytes: int) -> tuple[int, str, bool]:
 def _is_readable(characteristic: BleakGATTCharacteristic) -> bool:
     """Return True if the characteristic advertises read support."""
     return "read" in characteristic.properties
+
+
+def _async_get_address_lock(hass: HomeAssistant, address: str) -> asyncio.Lock:
+    """Return the diagnostic lock for a Bluetooth address."""
+    hass.data.setdefault(DOMAIN, {})
+    locks = hass.data[DOMAIN].setdefault(DATA_GATT_DIAGNOSTIC_LOCKS, {})
+    return locks.setdefault(_normalize_address(address), asyncio.Lock())
 
 
 def _petkit_service_infos(
@@ -91,26 +103,23 @@ async def async_inspect_petkit_gatt(
     """Connect to a Petkit device and log GATT services and characteristics."""
     bluetooth.async_get_scanner(hass)
 
-    hass.data.setdefault(DOMAIN, {})
-    lock = hass.data[DOMAIN].setdefault(DATA_GATT_DIAGNOSTIC_LOCK, asyncio.Lock())
+    service_infos = _petkit_service_infos(hass, address, local_name)
 
-    async with lock:
-        service_infos = _petkit_service_infos(hass, address, local_name)
+    if not service_infos and address is None:
+        LOGGER.warning(
+            "PETKIT HA Bluetooth GATT diagnostics: no connectable Petkit "
+            "advertisements found for local_name=%s",
+            local_name or PETKIT_EVERSWEET_3_PRO_UVC_NAME,
+        )
+        return
 
-        if not service_infos and address is None:
-            LOGGER.warning(
-                "PETKIT HA Bluetooth GATT diagnostics: no connectable Petkit "
-                "advertisements found for local_name=%s",
-                local_name or PETKIT_EVERSWEET_3_PRO_UVC_NAME,
-            )
-            return
+    if address:
+        addresses = [_normalize_address(address)]
+    else:
+        addresses = [info.address for info in service_infos]
 
-        if address:
-            addresses = [_normalize_address(address)]
-        else:
-            addresses = [info.address for info in service_infos]
-
-        for device_address in addresses:
+    for device_address in addresses:
+        async with _async_get_address_lock(hass, device_address):
             await _async_inspect_address(
                 hass,
                 device_address,
@@ -126,6 +135,30 @@ async def async_inspect_petkit_gatt(
             )
 
 
+async def async_listen_petkit_notifications(
+    hass: HomeAssistant,
+    *,
+    address: str,
+    duration: int = DEFAULT_LISTEN_DURATION,
+) -> None:
+    """Connect to a Petkit device and log AAA1 notifications."""
+    bluetooth.async_get_scanner(hass)
+
+    duration = min(duration, MAX_LISTEN_DURATION)
+    device_address = _normalize_address(address)
+
+    async with _async_get_address_lock(hass, device_address):
+        service_info = bluetooth.async_last_service_info(
+            hass, device_address, connectable=True
+        )
+        await _async_listen_address(
+            hass,
+            device_address,
+            service_info=service_info,
+            duration=duration,
+        )
+
+
 async def _async_inspect_address(
     hass: HomeAssistant,
     address: str,
@@ -134,6 +167,113 @@ async def _async_inspect_address(
     max_read_bytes: int,
 ) -> None:
     """Inspect one Bluetooth address."""
+    client: BleakClient | None = None
+    try:
+        client = await _async_connect_address(hass, address, service_info)
+        if client is None:
+            return
+        await _async_log_services(client, max_read_bytes)
+    except Exception as err:
+        LOGGER.warning(
+            "PETKIT HA Bluetooth GATT diagnostics: inspection failed for "
+            "address=%s: %s",
+            address,
+            err,
+        )
+    finally:
+        await _async_disconnect(client, address)
+
+
+async def _async_listen_address(
+    hass: HomeAssistant,
+    address: str,
+    *,
+    service_info: BluetoothServiceInfoBleak | None,
+    duration: int,
+) -> None:
+    """Listen for AAA1 notifications from one Bluetooth address."""
+    client: BleakClient | None = None
+    notify_started = False
+    started_at = monotonic()
+
+    def _notification_handler(_: int, data: bytearray) -> None:
+        elapsed = monotonic() - started_at
+        payload = bytes(data)
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: elapsed=%.3fs "
+            "uuid=%s len=%s hex=%s",
+            elapsed,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            len(payload),
+            payload.hex(" "),
+        )
+
+    try:
+        client = await _async_connect_address(hass, address, service_info)
+        if client is None:
+            return
+
+        async with asyncio.timeout(10):
+            initial_value = bytes(
+                await client.read_gatt_char(PETKIT_AAA1_CHARACTERISTIC_UUID)
+            )
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: initial read "
+            "uuid=%s len=%s hex=%s",
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            len(initial_value),
+            initial_value.hex(" "),
+        )
+
+        started_at = monotonic()
+        await client.start_notify(
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            _notification_handler,
+        )
+        notify_started = True
+        LOGGER.debug(
+            "PETKIT HA Bluetooth notification diagnostics: listening "
+            "address=%s uuid=%s duration=%ss",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            duration,
+        )
+        await asyncio.sleep(duration)
+    except Exception as err:
+        LOGGER.warning(
+            "PETKIT HA Bluetooth notification diagnostics: listener failed "
+            "for address=%s uuid=%s: %s",
+            address,
+            PETKIT_AAA1_CHARACTERISTIC_UUID,
+            err,
+        )
+    finally:
+        if notify_started and client is not None and client.is_connected:
+            try:
+                await client.stop_notify(PETKIT_AAA1_CHARACTERISTIC_UUID)
+                LOGGER.debug(
+                    "PETKIT HA Bluetooth notification diagnostics: stopped "
+                    "notifications address=%s uuid=%s",
+                    address,
+                    PETKIT_AAA1_CHARACTERISTIC_UUID,
+                )
+            except Exception as err:
+                LOGGER.debug(
+                    "PETKIT HA Bluetooth notification diagnostics: stop_notify "
+                    "failed address=%s uuid=%s: %s",
+                    address,
+                    PETKIT_AAA1_CHARACTERISTIC_UUID,
+                    err,
+                )
+        await _async_disconnect(client, address)
+
+
+async def _async_connect_address(
+    hass: HomeAssistant,
+    address: str,
+    service_info: BluetoothServiceInfoBleak | None,
+) -> BleakClient | None:
+    """Resolve and connect to one Bluetooth address."""
     ble_device = bluetooth.async_ble_device_from_address(
         hass, address, connectable=True
     )
@@ -148,7 +288,7 @@ async def _async_inspect_address(
             address,
             reason,
         )
-        return
+        return None
 
     name = (
         (service_info.name if service_info else None)
@@ -166,24 +306,18 @@ async def _async_inspect_address(
     )
 
     client: BleakClient | None = None
-    try:
-        client = await _async_connect(ble_device, name)
-        await _async_log_services(client, max_read_bytes)
-    except Exception as err:
-        LOGGER.warning(
-            "PETKIT HA Bluetooth GATT diagnostics: inspection failed for "
-            "address=%s local_name=%s: %s",
+    client = await _async_connect(ble_device, name)
+    return client
+
+
+async def _async_disconnect(client: BleakClient | None, address: str) -> None:
+    """Disconnect a diagnostic Bluetooth client."""
+    if client is not None and client.is_connected:
+        await client.disconnect()
+        LOGGER.debug(
+            "PETKIT HA Bluetooth GATT diagnostics: disconnected address=%s",
             address,
-            name,
-            err,
         )
-    finally:
-        if client is not None and client.is_connected:
-            await client.disconnect()
-            LOGGER.debug(
-                "PETKIT HA Bluetooth GATT diagnostics: disconnected address=%s",
-                address,
-            )
 
 
 async def _async_connect(ble_device: BLEDevice, name: str) -> BleakClient:
